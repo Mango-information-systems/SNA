@@ -5,7 +5,7 @@ import networkx as nx
 logging.basicConfig(level=logging.WARN)
 
 def main():
-    with open('output/belgian_groups.json', 'r') as f:
+    with open('../crawlers/output/belgian_groups.json', 'r') as f:
         groups = json.load(f)
 
     topics = {}
