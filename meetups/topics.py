@@ -40,6 +40,14 @@ def extract_members(groups):
             group['member_keys'].add(key)
     return all_members
 
+def remove_leafs(G):
+    foundleaf=True
+    while foundleaf:
+        foundleaf=False
+        for v in G.nodes():
+            if G.degree(v)<2:
+                foundleaf=True
+                G.remove_node(v)
 
 def main():
     with open('../crawlers/output/belgian_groups.json', 'r') as f:
@@ -50,15 +58,25 @@ def main():
     topics = extract_topics(groups)
     members = extract_members(groups)
 
-    graph = nx.Graph()
-    members_graph = nx.Graph()
+    common_topics_graph = nx.Graph()
+    common_members_graph = nx.Graph()
+    topics_and_groups_graph = nx.Graph()
+    for key in topics:
+        topics_and_groups_graph.add_node(key, name=topics[key]['name'], group='')
     for group in groups:
         category_name = ''
         if 'category' in group:
             category_name = group['category']['name']
-        members_graph.add_node(group['id'], name=group['name'], group=category_name, members=group['members'])
+        common_members_graph.add_node(group['id'], name=group['name'], group=category_name, members=group['members'])
         if len(group['topic_keys']) > 0:
-            graph.add_node(group['id'], name=group['name'], group=category_name, members=group['members'])
+            common_topics_graph.add_node(group['id'], name=group['name'], group=category_name, members=group['members'])
+            topics_and_groups_graph.add_node(group['id'], name=group['name'], group=category_name, members=group['members'])
+            for key in group['topic_keys']:
+                topics_and_groups_graph.add_edge(group['id'],key)
+    for key in topics:
+        topics_and_groups_graph.node[key]['members']=10*(topics_and_groups_graph.degree(key)-1)
+    remove_leafs(topics_and_groups_graph)
+    
 
 
     for left in groups:
@@ -66,15 +84,17 @@ def main():
             #to make sure we add edges only once
             if left['id'] >= right['id']:
                 continue
-            add_potential_edge(graph, left, right, 'topic_keys')
-            add_potential_edge(members_graph, left, right, 'member_keys', ratio=0.05)
+            add_potential_edge(common_topics_graph, left, right, 'topic_keys')
+            add_potential_edge(common_members_graph, left, right, 'member_keys', ratio=0.05)
     logging.info('graph built')
 
-    d = json_graph.node_link_data(graph) # node-link format to serialize
-    json.dump(d, open('html/force.json','w'))
-    d = json_graph.node_link_data(members_graph) # node-link format to serialize
-    json.dump(d, open('html/members_force.json','w'))
-    print('Wrote node-link JSON data to html/force.json')
+    d = json_graph.node_link_data(common_topics_graph) # node-link format to serialize
+    json.dump(d, open('html/common_topics_graph.json','w'))
+    d = json_graph.node_link_data(common_members_graph) # node-link format to serialize
+    json.dump(d, open('html/common_members_graph.json','w'))
+    d = json_graph.node_link_data(topics_and_groups_graph) # node-link format to serialize
+    json.dump(d, open('html/topics_and_groups_graph.json','w'))
+    print('Wrote node-link JSON data files as html/*.json')
 
 
 if __name__ == "__main__":
