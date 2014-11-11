@@ -8,8 +8,10 @@ For more information, have a look at the [Hackpad](https://bxldatascience.hackpa
 
 ###Repository Contents
 
-* crawlers: extracting data from online APIs
-* matching: matching twitter and meetup profiles
-* meetups: analysis of data from meetup.com
-* study of willingness to travels for the members of the Brussels data science meetup
-* Using_NetworkX_for_graphs.ipynb: study of twitter social graphs data
+File/Folder  | Description
+------------- | -------------
+ crawlers | extracting data from online APIs
+ matching | matching twitter and meetup profiles
+ meetups | analysis of data from meetup.com
+ travel | study of willingness to travels for the members of the Brussels data science meetup
+ Using_NetworkX_for_graphs | study of twitter social graphs data
