@@ -26,16 +26,19 @@ var svg = d3.select("body").append("svg")
     .attr("width", width)
     .attr("height", height);
 
-d3.json("members_force.json", function(error, graph) {
+d3.json("force.json", function(error, graph) {
   var max_members= d3.max(graph.nodes, function(d) {
     return d.members;  //References first value in each subarray
   });
   sizeScale = d3.scale.sqrt().domain([0, max_members]).range([3, 25])
-  forceScale = d3.scale.sqrt().domain([10, max_members]).range([-10, -400])
+  forceScale = d3.scale.sqrt().domain([0, max_members]).range([-10, -200])
+  distanceScale = d3.scale.sqrt().domain([0, max_members]).range([10, 200])
 
   var force = d3.layout.force()
     .charge(function(d) { return forceScale(d.members); })
-    .linkDistance(30)
+    .linkDistance(function(d) {
+        return distanceScale((d.source.members + d.target.members));
+    })
     .size([width, height]);
 
   force
