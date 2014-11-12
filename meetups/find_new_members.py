@@ -3,6 +3,7 @@ import logging
 import csv
 import networkx as nx
 import codecs
+import math
 from enum import Enum
 from joblib import Parallel, delayed
 logging.basicConfig(level=logging.INFO)
@@ -63,12 +64,15 @@ def build_meetups_graph(groups, topics, members):
 
 def calculate_connectedness(graph, members, neighbour_member):
     connectedness = 0
+    #find all groups of which this person is a neighbour
+    all_groups = graph.neighbors(neighbour_member)
     for member in members:
         #for each member, calculate the number of direct connection with our members.
         #direct meaning: being a member of the same meetup group
         paths = list(nx.all_simple_paths(graph, source=member, target=neighbour_member, cutoff=2))
         connectedness += len(paths)
-    return connectedness
+    #divide result by # of groups of which she is connected to dilute the effect of people joining all possible groups
+    return float(connectedness)/float(math.sqrt(len(all_groups)))
 
 
 def build_new_member_list(group, graph, members_dict):
