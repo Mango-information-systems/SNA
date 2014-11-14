@@ -4,9 +4,11 @@ from networkx.readwrite import json_graph
 import networkx as nx
 from collections import defaultdict
 import numpy as np
+import math
 import pandas as pd
 import pickle
 import os
+from scipy.stats.mstats import gmean
 
 logging.basicConfig(level=logging.WARN)
 
@@ -180,20 +182,36 @@ def compute_slice_matrices(G):
         pickle.dump((OrderedNodes,NodeIndex,AdjMat,Invdegs),f)
         print '-slices saved'
 
-def graph_walk(v0, edge_sequence, AdjMat,Invdegs,normalize_before=True,normalize_after=False):
-    if not type(normalize_before) is list:
-        normalize_before = [normalize_before]*len(edge_sequence)
-    if not type(normalize_after) is list:
-        normalize_after = [normalize_after]*len(edge_sequence)
+def process(v,Invdegs,process=''):
+    if process=='deg':
+        return v * Invdegs
+    elif process=='sqrtdeg':
+        return v * np.sqrt(Invdegs)
+    else:
+        return v
+
+def normalize(v,normalization=''):
+    if normalization=='':
+        return v
+    elif normalization=='gmean': # Geometric mean, excluding zero entries
+        return v / math.exp(np.mean(np.log(v[np.nonzero(v)])))
+    elif normalization=='l1': # 
+        return v / sum(v)
+    elif normalization=='l2': 
+        return v / np.linalg.norm(v)
+
+def graph_walk(v0, edge_sequence, AdjMat,Invdegs,preprocess='sqrtdeg',postprocess='sqrtdeg',normalization='gmean'):
+    if isinstance(preprocess,basestring):
+        preprocess = [preprocess]*len(edge_sequence)
+    if isinstance(postprocess,basestring):
+        postprocess = [postprocess]*len(edge_sequence)
 
     v = v0
-    for nbefore, etype, nafter in zip(normalize_before, edge_sequence, normalize_after):
-        if nbefore:
-            v = v * Invdegs[etype]
+    for prepr, etype, postpr in zip(preprocess, edge_sequence, postprocess):
+        v = process(v,Invdegs[etype],prepr)
         v = AdjMat[etype].dot(v)
-        if nafter:
-            v = v * Invdegs[etype]
-    return v
+        v = process(v,Invdegs[etype],postpr)
+    return normalize(v,normalization=normalization)
 
 def get_col_from_vector(v,OrderedNodes):
     col={}
@@ -202,85 +220,98 @@ def get_col_from_vector(v,OrderedNodes):
         col[OrderedNodes[idx][1]] = v[idx]
     return col
 
-def main():
 
-    ### Load Meetup Data
-    print 'Loading meetup data:'
-    meetupfrom = 'belgian_groups.json'
-    #meetupfrom = 'groups_be_tech.json'
-    print '-loading groups'
-    with open('../crawlers/output/'+meetupfrom, 'r') as f:
-        groups = json.load(f)
+#def main():
 
-    groupsdict = {}
-    for group in groups:
-        groupsdict[group['id']] = group
-    print '-loading members'
-    members = extract_members(groups)
+### Load Meetup Data
+print 'Loading meetup data:'
+meetupfrom = 'belgian_groups.json'
+#meetupfrom = 'groups_be_tech.json'
+print '-loading groups'
+with open('../crawlers/output/'+meetupfrom, 'r') as f:
+    groups = json.load(f)
+
+groupsdict = {}
+for group in groups:
+    groupsdict[group['id']] = group
+print '-loading members'
+members = extract_members(groups)
 
 
-    if not os.path.isfile('pickle/cached_slices.pkl'):
-        print 'First time running this script!'
-        print '-loading topics'
-        topics = extract_topics(groups)
-        print '-loading events'
-        events = extract_events(groups)
-        print '-loading rsvps'
-        rsvps = extract_rsvps(groups)
-        
-        print '-constructing full metup graph'
-        G = construct_meetup_graph(groups,topics,members,events,rsvps)
-        print '-computing matrices and slices...'
-        compute_slice_matrices(G)
-    else:
-        print 'skipping slice computations. To recompute, delete pickle folder.'
-    print "loading matrices and slices"
-    with open('pickle/cached_slices.pkl','r') as f:
-        OrderedNodes,NodeIndex,AdjMat,Invdegs = pickle.load(f)
+if not os.path.isfile('pickle/cached_slices.pkl'):
+    print 'First time running this script!'
+    print '-loading topics'
+    topics = extract_topics(groups)
+    print '-loading events'
+    events = extract_events(groups)
+    print '-loading rsvps'
+    rsvps = extract_rsvps(groups)
+    
+    print '-constructing full metup graph'
+    G = construct_meetup_graph(groups,topics,members,events,rsvps)
+    print '-computing matrices and slices...'
+    compute_slice_matrices(G)
+else:
+    print 'skipping slice computations. To recompute, delete pickle folder.'
+print "loading matrices and slices"
+with open('pickle/cached_slices.pkl','r') as f:
+    OrderedNodes,NodeIndex,AdjMat,Invdegs = pickle.load(f)
 
-    #Find the BruDataSci meetup
-    for idx,n in enumerate(OrderedNodes):
-        if n[0]=='group':
-            if groupsdict[n[1]]['name']=='Brussels Data Science Meetup':
-                BDS = groupsdict[n[1]]
-                BDSidx = idx
-                break
+#Find the BruDataSci meetup
+for idx,n in enumerate(OrderedNodes):
+    if n[0]=='group':
+        if groupsdict[n[1]]['name']=='Brussels Data Science Meetup':
+            BDS = groupsdict[n[1]]
+            BDSidx = idx
+            break
 
-    N = len(OrderedNodes)
+N = len(OrderedNodes)
 
-    #Initialize vector on the Brussels Data Science group
-    v0 = np.zeros((N,1))
-    v0[BDSidx,0] = 1
+#Initialize vector on the Brussels Data Science group
+v0 = np.zeros((N,1))
+v0[BDSidx,0] = 1
 
-    # Metrics defined by edge paths 
-    #   membership = Kris' "connectivity": members of groups which share members with BruDataSci
-    #   topic_1 = Being interested in the same topics as BruDataSci
-    #   topic_2 = Being interested in the same topics as members of BruDataSci
-    #   topic_3 = Being interested in the same topics as attendees of BruDataSci meetups (wheighted by attendance)
-    edge_seqs = {'membership':['member of','member of','member of'],
-                 'topic_1':['topic of','interested in'],
-                 'topic_2':['member of','interested in','interested in'],
-                 'topic_3':['event of','rsvp','interested in','interested in']
-                }
+# Metrics defined by edge paths 
+#   membership = Kris' "connectivity": members of groups which share members with BruDataSci
+#   topic_1 = Being interested in the same topics as BruDataSci
+#   topic_2 = Being interested in the same topics as members of BruDataSci
+#   topic_3 = Being interested in the same topics as attendees of BruDataSci meetups (wheighted by attendance)
+edge_seqs = {'membership':['member of','member of','member of'],
+             'topic_1':['topic of','interested in'],
+             'topic_2':['member of','interested in','interested in'],
+             'topic_3':['event of','rsvp','interested in','interested in']
+            }
 
-    # Create a dataframe to view the output
-    df = pd.DataFrame({'id':[m for m in members]})
-    df['name']=df.id.map(lambda x:members[x]['name'])
-    df['BruDataSci_member'] = df.id.map(lambda x: x in BDS['member_keys'])
-    print 'computing metrics'
-    for metric in edge_seqs:
-        v = graph_walk(v0,edge_seqs[metric],AdjMat,Invdegs)
-        df[metric] = df.id.map(get_col_from_vector(v,OrderedNodes))
-        l = len(edge_seqs[metric])
-        normalize_after = [False]*(l-1) + [True]
-        v = graph_walk(v0,edge_seqs[metric],AdjMat,Invdegs,normalize_after=normalize_after)
-        df[metric+'_end_norm'] = df.id.map(get_col_from_vector(v,OrderedNodes))
-    v = graph_walk(v0,edge_seqs['membership'],AdjMat,Invdegs,normalize_before=False)
-    df['membership_unnorm'] = df.id.map(get_col_from_vector(v,OrderedNodes))
+# Create a dataframe to view the output
+df = pd.DataFrame({'id':[m for m in members]})
+df['name']=df.id.map(lambda x:members[x]['name'])
+df['BruDataSci_member'] = df.id.map(lambda x: x in BDS['member_keys'])
+print 'computing metrics'
+for metric in edge_seqs:
+    # Compute weights using the default (square root) pre and post processing
+    v = graph_walk(v0,edge_seqs[metric],AdjMat,Invdegs)
+    df[metric] = df.id.map(get_col_from_vector(v,OrderedNodes))
 
-    df.to_csv('output/metrics.csv',encoding='utf-8')
-    print 'saved output'
+    #v = graph_walk(v0,edge_seqs[metric],AdjMat,Invdegs,preprocess='deg',postprocess='deg')
+    #df[metric+'_norm^2'] = df.id.map(get_col_from_vector(v,OrderedNodes))
+
+    #v = graph_walk(v0,edge_seqs[metric],AdjMat,Invdegs,preprocess='',postprocess='deg')
+    #df[metric+'_proc_in'] = df.id.map(get_col_from_vector(v,OrderedNodes))
+
+    #v = graph_walk(v0,edge_seqs[metric],AdjMat,Invdegs,preprocess='deg',postprocess='')
+    #df[metric+'_proc_out'] = df.id.map(get_col_from_vector(v,OrderedNodes))
+
+    # Compute weights without processing nor normalization
+    #v = graph_walk(v0,edge_seqs[metric],AdjMat,Invdegs,preprocess='',postprocess='',normalization='')
+    #df[metric+'_noproc'] = df.id.map(get_col_from_vector(v,OrderedNodes))
+
+# Compute weights without processing nor normalization
+v = graph_walk(v0,edge_seqs['membership'],AdjMat,Invdegs,preprocess='',postprocess='',normalization='')
+df['membership_raw'] = df.id.map(get_col_from_vector(v,OrderedNodes))
+
+df.to_csv('output/metrics.csv',encoding='utf-8')
+print 'saved output'
     
 
-if __name__ == "__main__":
-    main()
+#if __name__ == "__main__":
+#    main()
