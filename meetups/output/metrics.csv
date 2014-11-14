@@ -1,4 +1,4 @@
-,id,name,BruDataSci_member,membership,membership_final_norm,topic_3,topic_3_final_norm,topic_2,topic_2_final_norm,topic_1,topic_1_final_norm,membership_unnormalized
+,id,name,BruDataSci_member,membership,membership_end_norm,topic_3,topic_3_end_norm,topic_2,topic_2_end_norm,topic_1,topic_1_end_norm,membership_unnorm
 0,161677312,Antoine,False,4.19999319024e-05,4.19999319024e-05,8.5779758496e-05,3.06356280343e-06,9.960889206e-05,3.55746043072e-06,4.80769230769e-05,1.71703296703e-06,73.0
 1,11354112,danielle,False,2.45120630127e-06,2.45120630127e-06,1.40268563444e-05,1.00191831031e-06,1.58733029355e-05,1.13380735253e-06,0.0,0.0,5.0
 2,178257922,Johan SK,False,1.24266825728e-05,1.24266825728e-05,0.0,0.0,0.0,0.0,0.0,0.0,1.0

@@ -3,74 +3,136 @@ import logging
 import csv
 import networkx as nx
 import codecs
-import math
 from enum import Enum
-from joblib import Parallel, delayed
 logging.basicConfig(level=logging.INFO)
-
-PARALLELISM = 8
 
 
 class Type(Enum):
     Groups = 1
     Members = 2
     Topics = 3
-    Membership = 4
-    Interest = 5
+    Events = 4
+    Membership = 5
+    Interest = 6
+    Attendance = 7
 
 
-def add_member(graph, member, member_key):
-    if member_key in graph:
-        if 'type' in graph[member_key] and graph[member_key]['type'] != Type.Members:
-            raise 'key error: %s exists but is not a member' % member_key
-    else:
-        graph.add_node(member_key, name=member['name'], type=Type.Members)
-
-
-def link_members(graph, group, key, members):
+def link_members(graph, group, members):
     for member_key in group['member_keys']:
         member = members[str(member_key)]
-        add_member(graph, member, member_key)
-        graph.add_edge(key, member_key, type=Type.Membership)
+        if member_key not in graph:
+            graph.add_node(member_key, name=member['name'], type=Type.Members)
+        graph.add_edge(group['id'], member_key, type=Type.Membership)
 
 
-def add_topic(graph, topic, topic_key):
-    if topic_key in graph:
-        if 'type' in graph[topic_key] and graph[topic_key]['type'] != Type.Topics:
-            raise 'key error: %s exists but is not a topic' % topic_key
-    else:
-        graph.add_node(topic_key, name=topic['name'], type=Type.Topics)
-
-
-def link_topics(graph, group, key, topics):
+def link_topics(graph, group, topics):
     for topic_key in group['topic_keys']:
         topic = topics[str(topic_key)]
-        add_topic(graph, topic, topic_key)
-        graph.add_edge(key, topic_key, type=Type.Interest)
+        if topic_key not in graph:
+            graph.add_node(topic_key, name=topic['name'], type=Type.Topics)
+            logging.info('added topic %d: %s as group interest' %(topic_key, topic['name']))
+        graph.add_edge(group['id'], topic_key, type=Type.Interest)
 
 
-def build_meetups_graph(groups, topics, members):
+def link_members_to_topics(graph, members, topics):
+    for key, value in topics.iteritems():
+        key = int(key)
+        if key not in graph:
+            graph.add_node(key, name=value['name'], type=Type.Topics)
+            logging.info('added topic %d: %s as member interest' %(key, value['name']))
+    for key, member in members.iteritems():
+        for topic in member['topics']:
+            graph.add_edge(member['id'], topic['id'], type=Type.Interest)
+
+
+def link_members_to_events(graph, members, events):
+    for key, event in events.iteritems():
+        if key not in graph:
+            graph.add_node(key, name=event['name'], type=Type.Events)
+        for member_key in event['member_keys']:
+            if str(member_key) in members:
+                member = members[str(member_key)]
+            else:
+                logging.warn('member %d for event %s unkown in memberlist' %(member_key, event['name']))
+            graph.add_edge(member['id'], event['id'], type=Type.Attendance)
+
+
+def build_meetups_graph(groups, topics, members, events):
     graph = nx.Graph()
     for group in groups:
         key = group['id']
         graph.add_node(key, name=group['name'], type=Type.Groups, members=group['members'])
-        link_members(graph, group, key, members)
-        #link_topics(graph, group, key, topics)
+        link_members(graph, group,members)
+        link_topics(graph, group, topics)
+    link_members_to_topics(graph, members, topics)
+    link_members_to_events(graph, members, events)
     nx.freeze(graph)
 
     logging.info('graph built')
     return graph
 
 
-def calculate_connectedness(graph, members, neighbour_member):
+def calculate_connectedness_member(graph, center, candidate):
+    #calculate all direct connections with our meetup groups
+    #direct meaning: you're a member of the same meetup group as a member of us
+    members = get_all_members(graph, center)
+    candidate_groups = set(get_all_groups(graph, candidate))
     connectedness = 0
-
     for member in members:
-        #for each member, calculate the number of direct connection with our members.
-        #direct meaning: being a member of the same meetup group
-        paths = list(nx.all_simple_paths(graph, source=member, target=neighbour_member, cutoff=2))
-        connectedness += len(paths)
+        groups = set(get_all_groups(graph, member))
+        connectedness += len(groups.intersection(candidate_groups))
     return connectedness
+
+
+def initialize_candiate(members_dict, key):
+    return dict(info=members_dict[str(key)], connectedness=0, activity=0, interests=0)
+
+
+def calculate_interests_member(graph, center, candidate):
+    center_interests = set(get_all_topics(graph, center))
+    member_interests = set(get_all_topics(graph, candidate))
+    interests = len(center_interests.intersection(member_interests))/float(len(center_interests.union(member_interests)))
+    return interests
+
+
+def calculate_metrics(candidates, graph, center, members_dict):
+    # get all members of our meetup group
+    members = get_all_members(graph, center)
+
+    count = 0
+    for key, member in members_dict.iteritems():
+        key = int(key)
+        #ignore current members
+        if key in members:
+            continue
+        interests = calculate_interests_member(graph, center, key)
+        activity = calculate_activity_member(graph, members, key)
+        connectedness = calculate_connectedness_member(graph, center, key)
+        count += 1
+        #don't add potential members if there is no interests shared
+        if interests == 0:
+            continue
+        if key not in candidates:
+            candidates[key] = initialize_candiate(members_dict, key)
+        candidates[key]['interests'] = interests
+        candidates[key]['activity'] = activity
+        candidates[key]['connectedness'] = connectedness
+        logging.info('%d/%d set member metrics of %s to %f - %f - %f',
+                     count, len(members_dict), candidates[key]['info']['name'], interests, activity, connectedness)
+
+
+def calculate_activity_member(graph, members, candidate):
+    activity = 0
+    candidate_activity = set(get_all_events(graph, candidate))
+    events_attended = len(candidate_activity)
+    if events_attended == 0:
+        return 0
+    for member in members:
+        member_activity = set(graph.neighbors(member))
+        #add all events which were attented by both this member and the candidate
+        activity += len(member_activity.intersection(candidate_activity))
+
+    return float(activity)
 
 
 def build_new_member_list(group, graph, members_dict):
@@ -81,36 +143,33 @@ def build_new_member_list(group, graph, members_dict):
         3. Interests: should share many of the interests of the group
     '''
     candidates = {}
-    key = group['id']
-    center = graph[key]
+    center = group['id']
 
-    # get all members of our meetup group
-    members = graph.neighbors(key)
-    # get people who are members of groups which also contains members of our group
-    neighbour_members = [key for key,value in nx.single_source_shortest_path_length(graph,key,cutoff=3).iteritems() if value == 3]
-    size = len(neighbour_members)
-    count = 0
-    for neighbour_member in neighbour_members:
-        candidates[neighbour_member] = dict(info=members_dict[str(neighbour_member)], connectedness=0, activity=0, interests=0)
-        connectedness = calculate_connectedness(graph, members, neighbour_member)
-        count +=1
-        candidates[neighbour_member]['connectedness'] = connectedness
-        logging.info('added member %d/%d %s', count, size, str(candidates[neighbour_member]))
+    calculate_metrics(candidates, graph, center, members_dict)
 
     return candidates
 
 
-
 def get_all_groups(graph, member_keys):
-    return [edge[0] for edge in graph.edges_iter(member_keys, data=True) if edge[2]['type']==Type.Membership]
-
-
-def get_all_members(graph, group_key):
-    return get_all_members(graph, [group_key])
+    return get_all_neighbours(graph, member_keys, Type.Membership)
 
 
 def get_all_members(graph, group_keys):
-    return [edge[1] for edge in graph.edges_iter(group_keys, data=True) if edge[2]['type']==Type.Membership]
+    return get_all_neighbours(graph, group_keys, Type.Membership)
+
+
+def get_all_topics(graph, keys):
+    return get_all_neighbours(graph, keys, Type.Interest)
+
+
+def get_all_events(graph, member_keys):
+    return get_all_neighbours(graph, member_keys, Type.Attendance)
+
+
+
+
+def get_all_neighbours(graph, keys, edgetype):
+        return [edge[1] for edge in graph.edges_iter(keys, data=True) if edge[2]['type']==edgetype]
 
 
 def find_group(groups, urlname):
@@ -121,8 +180,7 @@ def find_group(groups, urlname):
 
 
 def save(new_members, filename):
-    member_list = new_members.values()
-    sorted_members = sorted(new_members.values(), key=lambda m: m['connectedness'], reverse = True)
+    sorted_members = sorted(new_members.values(), key=lambda m: m['activity'], reverse = True)
     with open(filename, 'w', ) as csvfile:
         w = csv.writer(csvfile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
         w.writerow(['id', 'name', 'connectedness', 'interests', 'activity', 'url', 'thumb', 'photo'])
@@ -142,9 +200,11 @@ def main():
     topics = json.load(codecs.open('output/topics.json', 'r', encoding='utf-8'))
     members = json.load(codecs.open('output/members.json', 'r', encoding='utf-8'))
     groups = json.load(codecs.open('output/groups.json', 'r', encoding='utf-8'))
+    events = json.load(codecs.open('output/events.json', 'r', encoding='utf-8'))
+
+    graph = build_meetups_graph(groups, topics, members, events)
 
     group = find_group(groups, 'Brussels-Data-Science-Community-Meetup')
-    graph = build_meetups_graph(groups, topics, members)
     new_members = build_new_member_list(group, graph, members)
     save(new_members, 'output/new_members.csv')
 
