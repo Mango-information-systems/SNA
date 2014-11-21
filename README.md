@@ -14,4 +14,5 @@ File/Folder  | Description
  matching | matching twitter and meetup profiles
  meetups | analysis of data from meetup.com
  travel | study of willingness to travels for the members of the Brussels data science meetup
+ twitter | Analysis of twitter followers of @DataScienceBe and @bigdatabe
  Using_NetworkX_for_graphs | study of twitter social graphs data
